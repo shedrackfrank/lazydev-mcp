@@ -1,0 +1,21 @@
+{
+  "opencode": {
+    "type": "opencode",
+    "note": "Built-in harness. Optional here: it already uses LAZYDEV_OPENCODE_BIN and LAZYDEV_MODEL. version_argv defaults to [\"--version\"]."
+  },
+  "example-claude-code": {
+    "type": "command",
+    "argv": ["claude", "-p", "{prompt}"],
+    "note": "Example only: these flags are unverified guesses and must be checked against `claude --help`. Not tested; do not assume it works."
+  },
+  "example-codex": {
+    "type": "command",
+    "argv": ["codex", "exec", "{prompt}"],
+    "note": "Example only: these flags are unverified guesses and must be checked against `codex --help`. Not tested; do not assume it works."
+  },
+  "example-gemini": {
+    "type": "command",
+    "argv": ["gemini", "-p", "{prompt}"],
+    "note": "Example only: these flags are unverified guesses and must be checked against `gemini --help`. Not tested; do not assume it works."
+  }
+}

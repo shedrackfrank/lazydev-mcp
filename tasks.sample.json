@@ -1,0 +1,17 @@
+{
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "tasks": [
+    {
+      "id": "slug",
+      "prompt": "Create slug.js (CommonJS) exporting a function slugify(str) via module.exports = { slugify }. It lowercases the text, trims it, and replaces runs of spaces with a single hyphen. Also create slug.test.js with three simple tests using node:assert.",
+      "allowed_paths": ["slug.js", "slug.test.js"],
+      "verify": ["node", "-e", "const {slugify}=require('./slug.js');const a=require('node:assert');a.strictEqual(slugify('Hello World'),'hello-world');a.strictEqual(slugify('  A  b  '),'a-b');console.log('verify ok')"]
+    },
+    {
+      "id": "fib",
+      "prompt": "Create fib.js (CommonJS) exporting a function fib(n) via module.exports = { fib } that returns the nth Fibonacci number (fib(0) = 0, fib(1) = 1). Also create fib.test.js with three simple tests using node:assert.",
+      "allowed_paths": ["fib.js", "fib.test.js"],
+      "verify": ["node", "-e", "const {fib}=require('./fib.js');const a=require('node:assert');a.strictEqual(fib(0),0);a.strictEqual(fib(1),1);a.strictEqual(fib(10),55);console.log('verify ok')"]
+    }
+  ]
+}

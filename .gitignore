@@ -1,0 +1,17 @@
+node_modules/
+
+# Local configuration. These usually contain real machine paths.
+lazydev.harnesses.json
+opencode.json
+
+# Logs
+*.log
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Lazy Dev run output when LAZYDEV_OUT is inside the repo
+.lazydev/
+*.lazydev/
