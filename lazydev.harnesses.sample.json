@@ -8,10 +8,12 @@
     "argv": ["claude", "-p", "{prompt}"],
     "note": "Example only: these flags are unverified guesses and must be checked against `claude --help`. Not tested; do not assume it works."
   },
-  "example-codex": {
+  "codex": {
     "type": "command",
-    "argv": ["codex", "exec", "{prompt}"],
-    "note": "Example only: these flags are unverified guesses and must be checked against `codex --help`. Not tested; do not assume it works."
+    "argv": ["<path-to-codex-executable>", "exec", "-s", "workspace-write", "--skip-git-repo-check", "--ephemeral", "-C", "{cwd}", "-"],
+    "stdin": true,
+    "version_argv": ["<path-to-codex-executable>", "--version"],
+    "note": "Verified on Windows with codex-cli 0.170.0 on small file-creation tasks, alone and mixed with OpenCode in one run. On Windows use the real codex.exe (for example under the global npm folder, inside @openai/codex-win32-x64), not the codex.ps1 or codex.cmd shim, because workers start without a shell. This version has no --full-auto flag; -s workspace-write is what lets it edit files. Not verified: larger tasks, other versions, macOS, Linux. Codex reports no token or cost data and the shell-command audit is skipped for it."
   },
   "example-gemini": {
     "type": "command",

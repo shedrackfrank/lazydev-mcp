@@ -12,7 +12,8 @@
   "bin": {
     "lazydev-mcp": "mcp-server.mjs",
     "lazydev-run": "lazydev-poc.mjs",
-    "lazydev-clean": "lazydev-clean.mjs"
+    "lazydev-clean": "lazydev-clean.mjs",
+    "lazydev-init": "lazydev-init.mjs"
   },
   "files": [
     "*.mjs",
@@ -28,7 +29,7 @@
     "orchestration"
   ],
   "scripts": {
-    "check": "node --check fake-harness.mjs && node --check lazydev-bin.mjs && node --check lazydev-clean.mjs && node --check lazydev-harnesses.mjs && node --check lazydev-integrate.mjs && node --check lazydev-poc.mjs && node --check mcp-server.mjs && node --check mcp-smoke.mjs && node --check selftest.mjs",
+    "check": "node --check fake-harness.mjs && node --check lazydev-bin.mjs && node --check lazydev-clean.mjs && node --check lazydev-harnesses.mjs && node --check lazydev-init.mjs && node --check lazydev-integrate.mjs && node --check lazydev-poc.mjs && node --check mcp-server.mjs && node --check mcp-smoke.mjs && node --check selftest.mjs",
     "selftest": "node selftest.mjs",
     "smoke": "node mcp-smoke.mjs",
     "test": "npm run check && npm run selftest && npm run smoke"

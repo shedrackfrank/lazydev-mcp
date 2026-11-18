@@ -1,11 +1,13 @@
 // selftest.mjs - pure unit tests for the dependency gate. No git, no OpenCode, no network.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildBrief, clipVerifyOutput, exec, findCycle, readyAndBlocked, validateTasks, validRunId } from './lazydev-poc.mjs';
 import { mergeOrder } from './lazydev-integrate.mjs';
 import { fillArgv, normalizeHarnessConfig, validateHarnessConfig } from './lazydev-harnesses.mjs';
 import { selectRuns, uniquePaths } from './lazydev-clean.mjs';
 import { resolveOpencodeBin } from './lazydev-bin.mjs';
+import { buildHarnessConfig, canWriteFile, findExecutable, mcpConfigSnippet } from './lazydev-init.mjs';
 
 const task = (id, depends_on) => ({ id, prompt: `do ${id}`, allowed_paths: ['x.js'], ...(depends_on ? { depends_on } : {}) });
 const spec = (tasks) => ({ tasks });
@@ -425,5 +427,121 @@ await testAsync('exec: stderr is capped separately from stdout', () => withMaxOu
   assert.equal(r.stdout, '');
   assert.equal(r.truncated, true);
 }));
+
+// ---------- lazydev-init.mjs ----------
+
+const sampleConfig = {
+  opencode: { type: 'opencode', note: 'built-in harness' },
+  'example-claude-code': { type: 'command', argv: ['claude', '-p', '{prompt}'], note: 'sample note' },
+  codex: {
+    type: 'command',
+    argv: ['<path-to-codex-executable>', 'exec', '{prompt}'],
+    version_argv: ['<path-to-codex-executable>', '--version'],
+  },
+  'example-gemini': { type: 'command', argv: ['gemini', '-p', '{prompt}'] },
+};
+
+test('findExecutable: Windows prefers a real .exe over a .cmd shim', () => {
+  const fs = fakeFs({ files: ['C:\\bin\\claude.cmd', 'C:\\bin\\claude.exe'] });
+  assert.deepEqual(findExecutable('claude', { PATH: 'C:\\bin' }, 'win32', fs), { path: 'C:\\bin\\claude.exe', shim: false });
+});
+
+test('findExecutable: Windows reports a lone .cmd shim as unusable', () => {
+  const fs = fakeFs({ files: ['C:\\bin\\claude.cmd'] });
+  assert.deepEqual(findExecutable('claude', { PATH: 'C:\\bin' }, 'win32', fs), { path: 'C:\\bin\\claude.cmd', shim: true });
+});
+
+test('findExecutable: not found returns null', () => {
+  const fs = fakeFs({ files: [] });
+  assert.equal(findExecutable('claude', { PATH: 'C:\\bin' }, 'win32', fs), null);
+});
+
+test('findExecutable: POSIX needs the executable bit', () => {
+  const plain = fakeFs({ files: ['/opt/bin/claude'], modes: { '/opt/bin/claude': 0o644 } });
+  assert.equal(findExecutable('claude', { PATH: '/opt/bin' }, 'linux', plain), null);
+  const execBit = fakeFs({ files: ['/opt/bin/claude'], modes: { '/opt/bin/claude': 0o755 } });
+  assert.deepEqual(findExecutable('claude', { PATH: '/opt/bin' }, 'linux', execBit), { path: '/opt/bin/claude', shim: false });
+});
+
+test('buildHarnessConfig: copies sample flags, fills paths, marks unverified and points at --help', () => {
+  const paths = { claude: 'C:\\bin\\claude.exe', codex: 'C:\\bin\\codex.exe' };
+  const { config: cfg, skipped } = buildHarnessConfig({ detected: ['opencode', 'claude', 'codex'], sample: sampleConfig, paths });
+  assert.deepEqual(skipped, []);
+  assert.deepEqual(Object.keys(cfg), ['opencode', 'claude', 'codex']);
+  assert.equal(cfg.opencode.type, 'opencode');
+  assert.equal(cfg.claude.type, 'command');
+  assert.deepEqual(cfg.claude.argv, ['C:\\bin\\claude.exe', '-p', '{prompt}']);
+  assert.equal(cfg.claude.verified, false);
+  assert.ok(cfg.claude.note.includes('unverified'), cfg.claude.note);
+  assert.ok(cfg.claude.note.includes('--help'), cfg.claude.note);
+  assert.equal(cfg.codex.verified, false);
+  assert.deepEqual(cfg.codex.argv, ['C:\\bin\\codex.exe', 'exec', '{prompt}']);
+  assert.deepEqual(cfg.codex.version_argv, ['C:\\bin\\codex.exe', '--version']);
+});
+
+test('buildHarnessConfig: never invents an entry for a tool missing from the sample', () => {
+  const { config: cfg, skipped } = buildHarnessConfig({
+    detected: ['opencode', 'cursor-agent'],
+    sample: sampleConfig,
+    paths: { 'cursor-agent': 'C:\\bin\\cursor-agent.exe' },
+  });
+  assert.equal(cfg['cursor-agent'], undefined);
+  assert.deepEqual(Object.keys(cfg), ['opencode']);
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].id, 'cursor-agent');
+  assert.ok(skipped[0].reason.includes('sample'), skipped[0].reason);
+});
+
+test('buildHarnessConfig: skips agents that were not detected', () => {
+  const { config } = buildHarnessConfig({ detected: ['opencode'], sample: sampleConfig });
+  assert.deepEqual(Object.keys(config), ['opencode']);
+});
+
+test('buildHarnessConfig: the real sample has no placeholder left and uses the detected codex path', () => {
+  const sample = JSON.parse(readFileSync(path.join(import.meta.dirname, 'lazydev.harnesses.sample.json'), 'utf8').replace(/^\uFEFF/, ''));
+  const paths = {
+    opencode: 'C:\\fake\\opencode-cli.exe',
+    claude: 'C:\\fake\\claude.exe',
+    codex: 'C:\\fake\\codex.exe',
+    gemini: 'C:\\fake\\gemini.exe',
+  };
+  const { config, skipped } = buildHarnessConfig({ detected: Object.keys(paths), sample, paths });
+  assert.deepEqual(skipped, []);
+  for (const id of Object.keys(paths)) assert.ok(config[id], `${id} missing from the config`);
+  for (const [id, entry] of Object.entries(config)) {
+    for (const arg of [...(entry.argv ?? []), ...(entry.version_argv ?? [])]) {
+      assert.ok(!/[<>]/.test(arg), `${id} still has a placeholder: ${arg}`);
+    }
+  }
+  assert.equal(config.codex.argv[0], paths.codex);
+  assert.equal(config.codex.version_argv[0], paths.codex);
+});
+
+test('canWriteFile: an existing file is kept unless --force is given', () => {
+  assert.equal(canWriteFile({ exists: true, force: false }), false);
+  assert.equal(canWriteFile({ exists: true, force: true }), true);
+  assert.equal(canWriteFile({ exists: false, force: false }), true);
+});
+
+test('mcpConfigSnippet: opencode layout uses codemode false and real absolute paths', () => {
+  const scriptDir = path.resolve('tools', 'lazydev');
+  const repo = path.resolve('work', 'repo');
+  const s = JSON.parse(mcpConfigSnippet({ lead: 'opencode', repo, scriptDir })).mcp.servers.lazydev;
+  assert.equal(s.type, 'local');
+  assert.equal(s.codemode, false);
+  assert.equal(s.disabled, false);
+  assert.deepEqual(s.command, ['node', path.join(scriptDir, 'mcp-server.mjs')]);
+  assert.equal(s.environment.LAZYDEV_REPO, repo);
+  assert.equal(s.environment.LAZYDEV_OUT, `${repo}.lazydev`);
+});
+
+test('mcpConfigSnippet: any other lead name is reported as unverified with generic fields', () => {
+  const text = mcpConfigSnippet({ lead: 'claude', repo: '/work/repo', scriptDir: '/tools/lazydev' });
+  assert.ok(text.startsWith('config format not verified for claude; see its documentation'), text);
+  assert.ok(text.includes('command: node'), text);
+  assert.ok(text.includes('args:'), text);
+  assert.ok(text.includes('environment:'), text);
+  assert.ok(text.includes('LAZYDEV_REPO=/work/repo'), text);
+});
 
 if (failed) process.exit(1);

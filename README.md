@@ -51,6 +51,40 @@ name. On other platforms it looks for `opencode` on `PATH`. It never uses a `.cm
 If nothing is found, the error lists every place it looked and tells you to set
 `LAZYDEV_OPENCODE_BIN`.
 
+## Setup
+
+Run the initializer once from the tool folder:
+
+```sh
+node lazydev-init.mjs --repo <path-to-your-repo>
+```
+
+It looks for `opencode`, `claude`, `codex`, `gemini` and `cursor-agent` on `PATH`, prints each path
+and `<program> --version`, and writes `lazydev.harnesses.json` next to `mcp-server.mjs` with the
+harnesses it found. Entries copied from the sample file keep `"verified": false`: their flags are
+still unverified guesses. Use `--print` to see the config without writing it and `--force` to
+replace an existing file (it is never overwritten silently). On Windows only a real `.exe` counts;
+a `.cmd` or `.ps1` shim is reported as found-but-unusable, because workers are spawned without a
+shell.
+
+To check one harness for real, run a single tiny task with it:
+
+```sh
+node lazydev-init.mjs --self-test claude --repo <path-to-your-repo>
+```
+
+That runs one task through `lazydev-poc.mjs` and, only if it succeeds, sets `"verified": true` for
+that harness. Nothing is executed unless you pass `--self-test`.
+
+To print a filled-in MCP config for the lead agent:
+
+```sh
+node lazydev-init.mjs --lead opencode --repo <path-to-your-repo>
+```
+
+Only the OpenCode layout is verified. For any other lead name it prints the generic command, args
+and environment fields instead, so you can translate them.
+
 ## Configuration
 
 Copy `opencode.mcp.sample.json` to your OpenCode config (usually `opencode.json` in the project or
@@ -134,8 +168,22 @@ containing the prompt) and `{cwd}` (the task worktree).
 }
 ```
 
-The `example-claude-code`, `example-codex` and `example-gemini` entries in the sample are
-**unverified guesses**. Check the flags against each CLI's `--help` before using them.
+### Verified harnesses
+
+- **OpenCode** — the built-in harness; it is what the measured results below use.
+- **Codex** — the `codex` entry in the sample. Verified on Windows with codex-cli 0.170.0 on small
+  file-creation tasks, alone and mixed with OpenCode in one run. Not verified: larger tasks, other
+  versions, macOS, Linux. Codex reports no token or cost data, and the shell-command audit is
+  skipped for it.
+
+On Windows, run `npm root -g` and look for `codex.exe` under the `@openai/codex-win32-x64` folder.
+Use that real executable, not the `codex.ps1` or `codex.cmd` shim, because workers start without a
+shell.
+
+### Unverified examples
+
+The `example-claude-code` and `example-gemini` entries are **unverified guesses**. Check the flags
+against each CLI's `--help` before using them.
 
 ## Safety model
 
