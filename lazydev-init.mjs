@@ -21,7 +21,7 @@ const RUNNER = path.join(HERE, 'lazydev-poc.mjs');
 export const AGENT_SAMPLE = {
   claude: 'example-claude-code',
 };
-export const AGENT_IDS = ['claude', 'codex', 'gemini', 'cursor-agent'];
+export const AGENT_IDS = ['claude', 'codex', 'gemini', 'agy'];
 
 const unverifiedNote = (id) => `Flags are unverified guesses for ${id}: check them against \`${id} --help\` before relying on them.`;
 const verifiedNote = (id) => `Verified with one tiny task by lazydev-init --self-test; check flags against \`${id} --help\` for anything more complex.`;
@@ -48,6 +48,14 @@ function isExecutable(fs, file) {
   } catch { return false; }
 }
 
+// Pure: extra install locations to try after PATH, for installers that do not update the current
+// terminal. Antigravity on Windows installs here and does not add itself to PATH.
+function fallbackExecutables(id, env, platform, P) {
+  if (platform !== 'win32' || id !== 'agy') return [];
+  const base = env.LOCALAPPDATA ?? env.LocalAppData;
+  return base ? [P.join(base, 'agy', 'bin', 'agy.exe')] : [];
+}
+
 // Pure: env, platform and fs are injected. On Windows only a real .exe is usable (Lazy Dev spawns
 // without a shell); a .cmd/.bat/.ps1 is reported as a shim. On POSIX the file must be executable.
 export function findExecutable(id, env = process.env, platform = process.platform, fs = nodeFs) {
@@ -67,6 +75,10 @@ export function findExecutable(id, env = process.env, platform = process.platfor
     } else if (isExecutable(fs, P.join(dir, id))) {
       return { path: P.join(dir, id), shim: false };
     }
+  }
+  // PATH had no real executable (only a shim, if anything): try the known install location.
+  for (const cand of fallbackExecutables(id, env, platform, P)) {
+    if (fs.existsSync(cand)) return { path: cand, shim: false };
   }
   return shim ? { path: shim, shim: true } : null;
 }

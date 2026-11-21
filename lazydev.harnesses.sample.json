@@ -15,6 +15,13 @@
     "version_argv": ["<path-to-codex-executable>", "--version"],
     "note": "Verified on Windows with codex-cli 0.170.0 on small file-creation tasks, alone and mixed with OpenCode in one run. On Windows use the real codex.exe (for example under the global npm folder, inside @openai/codex-win32-x64), not the codex.ps1 or codex.cmd shim, because workers start without a shell. This version has no --full-auto flag; -s workspace-write is what lets it edit files. Not verified: larger tasks, other versions, macOS, Linux. Codex reports no token or cost data and the shell-command audit is skipped for it."
   },
+  "agy": {
+    "type": "command",
+    "argv": ["<path-to-agy-executable>", "--mode", "auto", "-p", "{prompt}"],
+    "version_argv": ["<path-to-agy-executable>", "--version"],
+    "verified": false,
+    "note": "Verified on Windows with agy 1.5.14 on small file-creation tasks (single and in parallel with other harnesses). Needs one interactive sign-in first (run `agy` once). Runs with `--mode auto`, so edits and safe commands are auto-approved and anything else is soft-denied with exit code 0: rely on the git diff and verify, not the exit code. No cwd flag; the runner starts it in the worktree."
+  },
   "example-gemini": {
     "type": "command",
     "argv": ["gemini", "-p", "{prompt}"],

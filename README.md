@@ -59,10 +59,11 @@ Run the initializer once from the tool folder:
 node lazydev-init.mjs --repo <path-to-your-repo>
 ```
 
-It looks for `opencode`, `claude`, `codex`, `gemini` and `cursor-agent` on `PATH`, prints each path
-and `<program> --version`, and writes `lazydev.harnesses.json` next to `mcp-server.mjs` with the
-harnesses it found. Entries copied from the sample file keep `"verified": false`: their flags are
-still unverified guesses. Use `--print` to see the config without writing it and `--force` to
+It looks for `opencode`, `claude`, `codex`, `gemini` and `agy` on `PATH` (and
+`%LOCALAPPDATA%\agy\bin\agy.exe` on Windows), prints each path and `<program> --version`, and writes
+`lazydev.harnesses.json` next to `mcp-server.mjs` with the harnesses it found. Entries copied from
+the sample file keep `"verified": false`: their flags are still unverified guesses. Use `--print`
+to see the config without writing it and `--force` to
 replace an existing file (it is never overwritten silently). On Windows only a real `.exe` counts;
 a `.cmd` or `.ps1` shim is reported as found-but-unusable, because workers are spawned without a
 shell.
@@ -175,6 +176,14 @@ containing the prompt) and `{cwd}` (the task worktree).
   file-creation tasks, alone and mixed with OpenCode in one run. Not verified: larger tasks, other
   versions, macOS, Linux. Codex reports no token or cost data, and the shell-command audit is
   skipped for it.
+- **Antigravity** (`agy`) — the `agy` entry in the sample. Verified on Windows with agy 1.5.14 on
+  small file-creation tasks, single and in parallel with other harnesses. Run `agy` once to sign in
+  interactively first. It uses `--mode auto`, so edits and safe commands are auto-approved and
+  anything else is soft-denied with exit code 0: rely on the git diff and the verify command, not
+  the exit code. There is no cwd flag; the runner starts it in the worktree. Not verified: larger
+  tasks, other versions, macOS, Linux. On Windows `lazydev-init` also looks in
+  `%LOCALAPPDATA%\agy\bin\agy.exe`, because the installer does not update the current terminal's
+  `PATH`.
 
 On Windows, run `npm root -g` and look for `codex.exe` under the `@openai/codex-win32-x64` folder.
 Use that real executable, not the `codex.ps1` or `codex.cmd` shim, because workers start without a
@@ -183,7 +192,8 @@ shell.
 ### Unverified examples
 
 The `example-claude-code` and `example-gemini` entries are **unverified guesses**. Check the flags
-against each CLI's `--help` before using them.
+against each CLI's `--help` before using them. Cursor's CLI executable is `agent`, not
+`cursor-agent`, and it is untested; `lazydev-init` does not detect it.
 
 ## Safety model
 
@@ -210,7 +220,7 @@ Single observations, not benchmarks:
   flagged, not prevented.
 - The timeout kill path is untested on Windows.
 - More than 4 parallel workers is untested.
-- The `claude`, `codex` and `gemini` harness examples are unverified guesses.
+- The `claude` and `gemini` harness examples are unverified guesses; Cursor's `agent` CLI is untested.
 - Linux and macOS are untested.
 
 ## Contributing

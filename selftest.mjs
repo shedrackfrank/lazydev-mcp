@@ -7,7 +7,7 @@ import { mergeOrder } from './lazydev-integrate.mjs';
 import { fillArgv, normalizeHarnessConfig, validateHarnessConfig } from './lazydev-harnesses.mjs';
 import { selectRuns, uniquePaths } from './lazydev-clean.mjs';
 import { resolveOpencodeBin } from './lazydev-bin.mjs';
-import { buildHarnessConfig, canWriteFile, findExecutable, mcpConfigSnippet } from './lazydev-init.mjs';
+import { AGENT_IDS, buildHarnessConfig, canWriteFile, findExecutable, mcpConfigSnippet } from './lazydev-init.mjs';
 
 const task = (id, depends_on) => ({ id, prompt: `do ${id}`, allowed_paths: ['x.js'], ...(depends_on ? { depends_on } : {}) });
 const spec = (tasks) => ({ tasks });
@@ -439,6 +439,11 @@ const sampleConfig = {
     version_argv: ['<path-to-codex-executable>', '--version'],
   },
   'example-gemini': { type: 'command', argv: ['gemini', '-p', '{prompt}'] },
+  agy: {
+    type: 'command',
+    argv: ['<path-to-agy-executable>', '--mode', 'auto', '-p', '{prompt}'],
+    version_argv: ['<path-to-agy-executable>', '--version'],
+  },
 };
 
 test('findExecutable: Windows prefers a real .exe over a .cmd shim', () => {
@@ -463,6 +468,22 @@ test('findExecutable: POSIX needs the executable bit', () => {
   assert.deepEqual(findExecutable('claude', { PATH: '/opt/bin' }, 'linux', execBit), { path: '/opt/bin/claude', shim: false });
 });
 
+test('findExecutable: Windows falls back to LOCALAPPDATA\\agy\\bin\\agy.exe', () => {
+  const local = 'C:\\Users\\me\\AppData\\Local';
+  const exe = path.win32.join(local, 'agy', 'bin', 'agy.exe');
+  const fs = fakeFs({ files: [exe] });
+  assert.deepEqual(findExecutable('agy', { PATH: '', LOCALAPPDATA: local }, 'win32', fs), { path: exe, shim: false });
+});
+
+test('findExecutable: PATH still wins over the agy fallback', () => {
+  const local = 'C:\\Users\\me\\AppData\\Local';
+  const fs = fakeFs({ files: ['C:\\bin\\agy.exe', path.win32.join(local, 'agy', 'bin', 'agy.exe')] });
+  assert.deepEqual(
+    findExecutable('agy', { PATH: 'C:\\bin', LOCALAPPDATA: local }, 'win32', fs),
+    { path: 'C:\\bin\\agy.exe', shim: false },
+  );
+});
+
 test('buildHarnessConfig: copies sample flags, fills paths, marks unverified and points at --help', () => {
   const paths = { claude: 'C:\\bin\\claude.exe', codex: 'C:\\bin\\codex.exe' };
   const { config: cfg, skipped } = buildHarnessConfig({ detected: ['opencode', 'claude', 'codex'], sample: sampleConfig, paths });
@@ -481,15 +502,21 @@ test('buildHarnessConfig: copies sample flags, fills paths, marks unverified and
 
 test('buildHarnessConfig: never invents an entry for a tool missing from the sample', () => {
   const { config: cfg, skipped } = buildHarnessConfig({
-    detected: ['opencode', 'cursor-agent'],
+    detected: ['opencode', 'unknown-agent'],
     sample: sampleConfig,
-    paths: { 'cursor-agent': 'C:\\bin\\cursor-agent.exe' },
+    paths: { 'unknown-agent': 'C:\\bin\\unknown-agent.exe' },
   });
-  assert.equal(cfg['cursor-agent'], undefined);
+  assert.equal(cfg['unknown-agent'], undefined);
   assert.deepEqual(Object.keys(cfg), ['opencode']);
   assert.equal(skipped.length, 1);
-  assert.equal(skipped[0].id, 'cursor-agent');
+  assert.equal(skipped[0].id, 'unknown-agent');
   assert.ok(skipped[0].reason.includes('sample'), skipped[0].reason);
+});
+
+test('AGENT_IDS: agy is detected and cursor-agent is not', () => {
+  assert.ok(AGENT_IDS.includes('agy'));
+  assert.ok(!AGENT_IDS.includes('cursor-agent'));
+  assert.ok(!AGENT_IDS.includes('agent'));
 });
 
 test('buildHarnessConfig: skips agents that were not detected', () => {
@@ -504,6 +531,7 @@ test('buildHarnessConfig: the real sample has no placeholder left and uses the d
     claude: 'C:\\fake\\claude.exe',
     codex: 'C:\\fake\\codex.exe',
     gemini: 'C:\\fake\\gemini.exe',
+    agy: 'C:\\fake\\agy.exe',
   };
   const { config, skipped } = buildHarnessConfig({ detected: Object.keys(paths), sample, paths });
   assert.deepEqual(skipped, []);
@@ -515,6 +543,20 @@ test('buildHarnessConfig: the real sample has no placeholder left and uses the d
   }
   assert.equal(config.codex.argv[0], paths.codex);
   assert.equal(config.codex.version_argv[0], paths.codex);
+});
+
+test('buildHarnessConfig: agy gets its detected path and no placeholder is left', () => {
+  const sample = JSON.parse(readFileSync(path.join(import.meta.dirname, 'lazydev.harnesses.sample.json'), 'utf8').replace(/^\uFEFF/, ''));
+  const agyPath = 'C:\\Users\\me\\AppData\\Local\\agy\\bin\\agy.exe';
+  const { config, skipped } = buildHarnessConfig({ detected: ['agy'], sample, paths: { agy: agyPath } });
+  assert.deepEqual(skipped, []);
+  assert.ok(config.agy, 'agy missing from the config');
+  assert.equal(config.agy.argv[0], agyPath);
+  assert.equal(config.agy.version_argv[0], agyPath);
+  assert.equal(config.agy.verified, false);
+  for (const arg of [...config.agy.argv, ...config.agy.version_argv]) {
+    assert.ok(!/[<>]/.test(arg), `agy still has a placeholder: ${arg}`);
+  }
 });
 
 test('canWriteFile: an existing file is kept unless --force is given', () => {
