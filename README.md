@@ -1,15 +1,28 @@
 # Lazy Dev
 
-An MCP server where any lead agent delegates coding tasks to worker agents running in isolated git
-worktrees. The lead agent gets evidence-based reports back, and a human approves the merge. Lazy Dev
-is not a code generator: it starts workers, checks what actually changed in git and on disk, and
-refuses to trust a worker's own summary.
+**Let your coding agent hand work to other coding agents, and only accept what the evidence supports.**
+
+Lazy Dev is an MCP server. A lead agent (any MCP-capable agent) sends it a batch of independent tasks. Each task runs in its own git worktree with a worker agent (OpenCode, Codex, Antigravity, or any CLI you configure). Lazy Dev then checks the work itself: which files changed, whether they stay inside the paths the task was allowed to touch, and whether your `verify` command passes. It never takes the worker's word for it. Finished branches are staged and merged only after a human accepts them.
+
+## What you get
+- Parallel workers in isolated worktrees, one branch per task
+- Evidence-based reports: git diff, allowed paths, verify output, timing
+- Mixed harnesses in one batch (for example OpenCode, Codex and Antigravity at once)
+- Timeouts that kill the whole process tree
+- A staging branch for the merge; your own branch is never touched
 
 ## Status
+Early (v0.1). Tested on Windows; CI runs the test suite on Windows and Ubuntu. Verified harnesses: OpenCode, Codex CLI, Antigravity CLI (small tasks, alone and in parallel). Verified lead config: OpenCode. Everything else is documented as unverified below.
 
-This is a proof of concept. It works with OpenCode (the built-in harness) and with a generic command
-harness, so any CLI agent that takes a prompt can be plugged in. It has been tested on Windows only,
-and APIs, file layouts and messages may change.
+Delegation does not always pay off. In our measurements, tiny tasks were slower than doing the job in one session; a job with several independent pieces and short specs was about 1.7x faster in a single noisy run on a free model. Cost savings are not proven. Use it when the pieces are independent and a test can check each one.
+
+Workers and verify commands run as you, and worktrees are not a sandbox. Read the security notes before pointing it at anything important.
+
+## Quick start
+1. `git clone https://github.com/shedrackfrank/lazydev-mcp.git` and `npm install`
+2. `node lazydev-init.mjs` to detect your installed agent CLIs and write the harness config
+3. Register `mcp-server.mjs` in your lead agent (see "Lead agent setup" below)
+4. Ask your lead agent to call `list_harnesses`, then dispatch a small job
 
 ## How it works
 
@@ -27,10 +40,6 @@ and APIs, file layouts and messages may change.
 5. **Human accept** — a person reviews the staging worktree and merges it by hand if it is good.
 6. **`lazydev-clean`** — after the review, remove that run's worktrees and `lazydev/` branches. It is
    a dry run unless you pass `--yes`.
-
-Every task is judged from git and the event log, not from the worker's words: changed files are
-compared with `allowed_paths` (exact paths or globs), Lazy Dev runs `verify` itself, and
-Lazy Dev makes the commits after the checks pass.
 
 ## Install
 
@@ -183,7 +192,7 @@ fails before any work starts.
 
 ### Verified harnesses
 
-- **OpenCode** — the built-in harness; it is what the measured results below use.
+- **OpenCode** — the built-in harness.
 - **Codex** — the `codex` entry in the sample. Verified on Windows with codex-cli 0.170.0 on small
   file-creation tasks, alone and mixed with OpenCode in one run. Not verified: larger tasks, other
   versions, macOS, Linux. Codex reports no token or cost data, and the shell-command audit is
@@ -209,22 +218,13 @@ against each CLI's `--help` before using them. Cursor's CLI executable is `agent
 
 ## Safety model
 
-The worktree is a speed bump, not a sandbox. A worker that is blocked from writing outside its
+A worker that is blocked from writing outside its
 worktree can still use its shell to write anywhere the current user can. Lazy Dev detects and flags
 that after the fact, and it never commits out-of-scope files, but it cannot prevent it. Only run
 Lazy Dev on repositories and prompts you trust. OS-level isolation is future work.
 
 Branches are created only under `lazydev/`, worktrees only under `<out>/workspaces`, your current
 branch and working tree are never touched, and nothing is pushed.
-
-## Measured results
-
-Single observations, not benchmarks:
-
-- Small tasks were **slower** and used **more tokens** than doing the same work in one session; the
-  overhead of a worktree, a fresh worker and verification dominates a one-file change.
-- A five-module job with pre-written tests was about **1.7x faster** in one run.
-- Cost savings are **not proven**. Do not assume this saves money.
 
 ## Known limits
 
@@ -255,4 +255,4 @@ worker).
 
 MIT. See `LICENSE`.
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).

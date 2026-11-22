@@ -91,7 +91,7 @@ const runProcess = (cmd, args, { cwd, timeoutMs = 0, maxBytes } = {}) => new Pro
 
 const gitRun = (cwd, ...args) => runProcess('git', ['-c', 'core.quotepath=off', ...args], { cwd, timeoutMs: 60_000, maxBytes: GIT_MAX_OUTPUT_BYTES });
 
-const server = new McpServer({ name: 'lazydev', version: '1.0.0' });
+const server = new McpServer({ name: 'lazydev', version: '0.1.0' });
 
 const SPAWN_ERRORS = new Set(['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EINVAL', 'UNKNOWN']);
 

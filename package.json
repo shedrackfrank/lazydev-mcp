@@ -1,6 +1,6 @@
 {
   "name": "lazydev",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "An MCP server where a lead agent delegates coding tasks to worker agents in isolated git worktrees, verifies the results, and asks a human before merging.",
   "type": "module",
   "license": "MIT",
