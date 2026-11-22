@@ -220,7 +220,12 @@ export function validateTasks(spec, { harnesses = [OPENCODE] } = {}) {
     if (typeof t.prompt !== 'string' || !t.prompt.trim()) errs.push(`${id}: "prompt" is required`);
     if (!Array.isArray(t.allowed_paths) || t.allowed_paths.length === 0) errs.push(`${id}: "allowed_paths" is required, e.g. ["src/**"]`);
     for (const p of Array.isArray(t.allowed_paths) ? t.allowed_paths : []) {
-      if (typeof p !== 'string' || !p.trim() || isWinAbs(p) || p.startsWith('/') || p.split(/[\\/]/).includes('..')) errs.push(`${id}: bad allowed path ${JSON.stringify(p)} (must be relative, no "..")`);
+      if (typeof p !== 'string' || !p.trim() || isWinAbs(p) || p.startsWith('/') || p.split(/[\\/]/).includes('..')) {
+        errs.push(`${id}: bad allowed path ${JSON.stringify(p)} (must be relative, no "..")`);
+        continue;
+      }
+      const norm = p.replace(/\\/g, '/');
+      if (norm.endsWith('/')) errs.push(`${id}: bad allowed path ${JSON.stringify(p)} (folder entries are not supported; use a glob such as "src/**" or exact file paths)`);
     }
     if (t.depends_on !== undefined) {
       if (!Array.isArray(t.depends_on)) errs.push(`${id}: "depends_on" must be an array of task ids`);

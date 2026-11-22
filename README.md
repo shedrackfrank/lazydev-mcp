@@ -14,10 +14,10 @@ and APIs, file layouts and messages may change.
 ## How it works
 
 1. **`dispatch_tasks`** — the lead agent sends 1–12 tasks. Each task names the files it may touch
-   (`allowed_paths`) and optionally a `verify` command and `depends_on` task ids. Lazy Dev creates
-   one git worktree and one `lazydev/<runId>-<taskId>` branch per task, then starts a worker in
-   each. Independent tasks run in parallel; a task with `depends_on` starts only after its
-   dependencies commit.
+   (`allowed_paths`: exact relative paths or globs such as `src/**`; folder entries are rejected)
+   and optionally a `verify` command and `depends_on` task ids. Lazy Dev creates one git worktree and
+   one `lazydev/<runId>-<taskId>` branch per task, then starts a worker in each. Independent tasks
+   run in parallel; a task with `depends_on` starts only after its dependencies commit.
 2. **`wait_for_run`** — the lead agent polls until the run is finished.
 3. **`get_task_report`** — read a task's report: status, changed files, whether `verify` passed,
    out-of-scope changes, and flags from the audit of the worker's shell and file tool calls.
@@ -29,8 +29,8 @@ and APIs, file layouts and messages may change.
    a dry run unless you pass `--yes`.
 
 Every task is judged from git and the event log, not from the worker's words: changed files are
-compared with `allowed_paths`, Lazy Dev runs `verify` itself, and Lazy Dev makes the commits after
-the checks pass.
+compared with `allowed_paths` (exact paths or globs), Lazy Dev runs `verify` itself, and
+Lazy Dev makes the commits after the checks pass.
 
 ## Install
 

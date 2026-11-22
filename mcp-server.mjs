@@ -136,7 +136,7 @@ const taskSchema = z.object({
 });
 
 server.registerTool('dispatch_tasks', {
-  description: 'Start a LazyDev run of 1-12 coding tasks. verify = argument list, program first, run without a shell, e.g. ["node","-e","<js>"]. Split only large independent pieces; merge small or dependent ones into one task. Prompts must state exact export forms and the examples the verify will use. Each task may set harness to an id from list_harnesses.',
+  description: 'Start a LazyDev run of 1-12 coding tasks. allowed_paths entries are exact relative paths or globs (*, **, ?), e.g. ["src/**"]; folder entries are not supported. verify = argument list, program first, run without a shell, e.g. ["node","-e","<js>"]. Split only large independent pieces; merge small or dependent ones into one task. Prompts must state exact export forms and the examples the verify will use. Each task may set harness to an id from list_harnesses.',
   inputSchema: {
     tasks: z.array(taskSchema).min(1).max(12),
     model: z.string().optional(),
@@ -282,7 +282,7 @@ server.registerTool('request_integration', {
   if (!validRunId(args.run_id)) return err(`bad run_id: ${args.run_id}`);
   const runId = args.run_id;
   if (args.verify !== undefined) {
-    const messages = validateTasks({ tasks: [{ id: 'verify', prompt: 'verify', allowed_paths: ['*'], verify: args.verify }] });
+    const messages = validateTasks({ tasks: [{ id: 'verify', prompt: 'verify', allowed_paths: ['src/app.js'], verify: args.verify }] });
     if (messages.length) return err('invalid verify', { messages });
   }
 

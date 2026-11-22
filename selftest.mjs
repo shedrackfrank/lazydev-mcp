@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { buildBrief, clipVerifyOutput, exec, findCycle, readyAndBlocked, validateTasks, validRunId } from './lazydev-poc.mjs';
+import { buildBrief, clipVerifyOutput, exec, findCycle, globToRegExp, readyAndBlocked, validateTasks, validRunId } from './lazydev-poc.mjs';
 import { mergeOrder } from './lazydev-integrate.mjs';
 import { fillArgv, normalizeHarnessConfig, validateHarnessConfig } from './lazydev-harnesses.mjs';
 import { selectRuns, uniquePaths } from './lazydev-clean.mjs';
@@ -79,6 +79,50 @@ test('validateTasks: rejects a non-array verify', () => {
 
 test('validateTasks: accepts a single-element verify without spaces', () => {
   assert.deepEqual(validateTasks(spec([{ ...task('a'), verify: ['node'] }])), []);
+});
+
+// ---------- validateTasks allowed_paths ----------
+
+test('validateTasks: accepts exact paths and globs', () => {
+  assert.deepEqual(validateTasks(spec([{
+    id: 'a',
+    prompt: 'p',
+    allowed_paths: ['src/par-968894.js', 'src/**', '*.js', 'src/?.js'],
+  }])), []);
+});
+
+test('validateTasks: rejects a folder entry ending with a slash', () => {
+  const errs = validateTasks(spec([{ id: 'a', prompt: 'p', allowed_paths: ['src/'] }]));
+  assert.ok(errs.some((e) => e.includes('folder entries are not supported') && e.includes('src/**')), errs.join('; '));
+});
+
+test('validateTasks: rejects a Windows-style folder entry', () => {
+  const errs = validateTasks(spec([{ id: 'a', prompt: 'p', allowed_paths: ['src\\'] }]));
+  assert.ok(errs.some((e) => e.includes('folder entries are not supported') && e.includes('src/**')), errs.join('; '));
+});
+
+// ---------- globToRegExp ----------
+
+test('globToRegExp: src/** stays under src and requires the folder', () => {
+  const re = globToRegExp('src/**');
+  assert.equal(re.test('src/a.js'), true);
+  assert.equal(re.test('src/x/y.js'), true);
+  assert.equal(re.test('src2/a.js'), false);
+  assert.equal(re.test('../src/a.js'), false);
+  assert.equal(re.test('src'), false);
+});
+
+test('globToRegExp: * does not cross a slash', () => {
+  const re = globToRegExp('*');
+  assert.equal(re.test('a.js'), true);
+  assert.equal(re.test('x/a.js'), false);
+});
+
+test('globToRegExp: ? matches one non-slash character', () => {
+  const re = globToRegExp('src/?.js');
+  assert.equal(re.test('src/a.js'), true);
+  assert.equal(re.test('src/ab.js'), false);
+  assert.equal(re.test('src/x/y.js'), false);
 });
 
 // ---------- readyAndBlocked: diamond contract -> a, b -> c ----------
