@@ -23,7 +23,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { DEFAULT_HARNESSES_FILE, fillArgv, normalizeHarnessConfig, OPENCODE, readHarnessConfig } from './lazydev-harnesses.mjs';
+import { DEFAULT_HARNESSES_FILE, fillArgv, normalizeHarnessConfig, OPENCODE, readHarnessConfig, resolveDefaultHarness, validateTaskHarnesses } from './lazydev-harnesses.mjs';
 import { resolveOpencodeBin } from './lazydev-bin.mjs';
 
 const IS_WIN = process.platform === 'win32';
@@ -348,7 +348,7 @@ async function runTaskInner(t, ctx) {
     guardrail: t.guardrail ?? null, depends_on: [...(t.depends_on ?? [])], base: t.base ?? null };
   if (t.setupError) { res.reasons.push(`worktree setup failed: ${t.setupError}`); return res; }
 
-  const harness = ctx.harnesses.get(t.harness ?? OPENCODE) ?? ctx.harnesses.get(OPENCODE);
+  const harness = ctx.harnesses.get(t.harness ?? ctx.defaultHarness) ?? ctx.harnesses.get(ctx.defaultHarness) ?? ctx.harnesses.get(OPENCODE);
   const isCommand = harness.type === 'command';
   const brief = buildBrief(t);
   let info = null;
@@ -464,7 +464,7 @@ function frozenFiles(t, stateById) {
 
 // Create the task's worktree when the task starts. No deps: branch from HEAD. One dep: from that dep's commit.
 // Several deps: from the first dep's commit, then merge the others in (abort and fail on conflict).
-async function prepareWorktree(t, { repo, out, runId, head, stateById }) {
+async function prepareWorktree(t, { repo, out, runId, head, stateById, defaultHarness }) {
   t.wt = path.join(out, 'workspaces', `${runId}-${t.id}`);
   t.branch = `lazydev/${runId}-${t.id}`;
   t.ignore = new Set();
@@ -493,7 +493,7 @@ async function prepareWorktree(t, { repo, out, runId, head, stateById }) {
   const shortHead = await git(t.wt, 'rev-parse', '--short', 'HEAD');
   if (shortHead.code === 0) t.base = shortHead.stdout.trim();
 
-  if ((t.harness ?? OPENCODE) !== OPENCODE) { t.guardrail = 'n/a (command harness)'; return; }
+  if ((t.harness ?? defaultHarness) !== OPENCODE) { t.guardrail = 'n/a (command harness)'; return; }
 
   const cfg = path.join(t.wt, 'opencode.json');
   if (existsSync(cfg)) t.guardrail = 'none (repo has its own opencode.json, left untouched)';
@@ -507,7 +507,7 @@ async function prepareWorktree(t, { repo, out, runId, head, stateById }) {
 
 // ---------- main ----------
 
-const USAGE = `Usage: node lazydev-poc.mjs <tasks.json> --bin <opencode-cli> [options]
+const USAGE = `Usage: node lazydev-poc.mjs <tasks.json> [--bin <opencode-cli>] [options]
   --bin <path>         OpenCode CLI executable (default: LAZYDEV_OPENCODE_BIN, then auto-discovery). Use the real .exe, not a .cmd/.ps1 shim.
   --repo <dir>         git repository to work on (default: current folder)
   --model <p/m>        model, e.g. ${DEFAULT_MODEL} (default: "model" in the tasks file, else that one)
@@ -521,8 +521,10 @@ const USAGE = `Usage: node lazydev-poc.mjs <tasks.json> --bin <opencode-cli> [op
 
 Tasks may set "depends_on": ["task-id", ...]. A dependent starts only after every dependency is done, from the
 first dependency's commit, with the other dependency commits merged in. Files from dependencies are read-only.
-Tasks may also set "harness": "<id>" (default "opencode"). Extra command harnesses come from lazydev.harnesses.json
-(next to this script) or the file named by LAZYDEV_HARNESSES; "opencode" is always available.`;
+Tasks may also set "harness": "<id>". A task without one uses the default: LAZYDEV_DEFAULT_HARNESS or
+"default" in lazydev.harnesses.json when set, else "opencode" when it is available, else the only
+available harness. Extra command harnesses come from lazydev.harnesses.json (next to this script) or
+the file named by LAZYDEV_HARNESSES.`;
 
 async function main() {
   let v, positionals;
@@ -551,14 +553,26 @@ async function main() {
   let spec;
   try { spec = JSON.parse(readFileSync(positionals[0], 'utf8').replace(/^﻿/, '')); }
   catch (e) { fail(`cannot read tasks file: ${e.message}`); }
-  const errs = validateTasks(spec, { harnesses: [OPENCODE, ...Object.keys(harnessConfig.config)] });
+
+  const ocEntry = harnessConfig.config[OPENCODE] ?? {};
+  const preliminaryBin = v.bin ?? process.env.LAZYDEV_OPENCODE_BIN ?? ocEntry.bin ?? null;
+  const preliminary = normalizeHarnessConfig(harnessConfig.config, { bin: preliminaryBin });
+  const errs = validateTasks(spec, { harnesses: [...preliminary.keys()] });
   if (errs.length) fail(`invalid tasks file:\n  - ${errs.join('\n  - ')}`);
   if (v['no-commit'] && spec.tasks.some((t) => t.depends_on?.length)) {
     fail('--no-commit cannot be used when a task has depends_on: dependents need their dependencies committed');
   }
 
-  const ocEntry = harnessConfig.config[OPENCODE] ?? {};
-  const needsOpencode = spec.tasks.some((t) => (t.harness ?? OPENCODE) === OPENCODE);
+  const harnessErrs = validateTaskHarnesses(spec.tasks, preliminary);
+  if (harnessErrs.length) fail(`harness not available:\n  - ${harnessErrs.join('\n  - ')}`);
+  let defaultHarness = null;
+  if (spec.tasks.some((t) => t.harness === undefined)) {
+    const defaultRes = resolveDefaultHarness(preliminary, { config: harnessConfig.config });
+    if (defaultRes.error) fail(defaultRes.error);
+    defaultHarness = defaultRes.id;
+  }
+
+  const needsOpencode = spec.tasks.some((t) => (t.harness ?? defaultHarness) === OPENCODE);
   let bin = null;
   let ver = { stdout: '', stderr: '', code: 0 };
   if (needsOpencode) {
@@ -598,12 +612,12 @@ async function main() {
   writeFileSync(metaFile, JSON.stringify(meta, null, 2));
   runMeta = { file: metaFile, data: meta };
   mkdirSync(path.join(out, 'workspaces'), { recursive: true });
-  log(`run ${runId} | harness: ${ver.stdout.trim() || 'command only'} | model: ${model} | base: ${head.slice(0, 7)} | ${spec.tasks.length} task(s), up to ${maxPar} at once`);
+  log(`run ${runId} | harness: ${defaultHarness ?? 'per-task'}${ver.stdout.trim() ? ` (${ver.stdout.trim()})` : ''} | model: ${model} | base: ${head.slice(0, 7)} | ${spec.tasks.length} task(s), up to ${maxPar} at once`);
 
   // Contract gate: start tasks when their dependencies are done, block them when a dependency can never be done.
   const tasks = spec.tasks;
   const byId = new Map(tasks.map((t) => [t.id, t]));
-  const ctx = { bin, model, timeoutMs, runDir, harnesses, standalone: v.standalone, archived: v.archived, commit: !v['no-commit'] };
+  const ctx = { bin, model, timeoutMs, runDir, harnesses, defaultHarness, standalone: v.standalone, archived: v.archived, commit: !v['no-commit'] };
   // Print the JSON line and persist the same object atomically (readers never see a half-written file).
   const emit = (res) => {
     const line = JSON.stringify(res);
@@ -622,7 +636,7 @@ async function main() {
   const runOne = async (t) => {
     try {
       t.frozen = frozenFiles(t, stateById);
-      await prepareWorktree(t, { repo, out, runId, head, stateById });
+      await prepareWorktree(t, { repo, out, runId, head, stateById, defaultHarness });
       return await runTask(t, ctx);
     } catch (e) {
       return { id: t.id, status: 'failed', reasons: [`internal error: ${e.message}`], branch: t.branch ?? null, worktree: t.wt ?? null,

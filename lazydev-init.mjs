@@ -3,13 +3,12 @@
 // tiny real task to verify a single harness. Detection only; it never guesses flags that are not in
 // lazydev.harnesses.sample.json.
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import * as nodeFs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { resolveOpencodeBin } from './lazydev-bin.mjs';
-import { DEFAULT_HARNESSES_FILE, OPENCODE, readHarnessConfig, validateHarnessConfig } from './lazydev-harnesses.mjs';
+import { DEFAULT_HARNESSES_FILE, findExecutable, OPENCODE, readHarnessConfig, validateHarnessConfig } from './lazydev-harnesses.mjs';
 import { exec } from './lazydev-poc.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -37,51 +36,6 @@ const USAGE = `Usage: node lazydev-init.mjs [options]
 Without --self-test nothing is executed: the script only looks for CLIs and runs "<program> --version".`;
 
 const quote = (s) => (/[\s"]/.test(String(s)) ? `"${String(s).replace(/"/g, '\\"')}"` : String(s));
-
-function isExecutable(fs, file) {
-  if (!fs.existsSync(file)) return false;
-  if (typeof fs.statSync !== 'function') return true;
-  try {
-    const st = fs.statSync(file);
-    if (!st || typeof st.mode !== 'number') return true;
-    return (st.mode & 0o111) !== 0;
-  } catch { return false; }
-}
-
-// Pure: extra install locations to try after PATH, for installers that do not update the current
-// terminal. Antigravity on Windows installs here and does not add itself to PATH.
-function fallbackExecutables(id, env, platform, P) {
-  if (platform !== 'win32' || id !== 'agy') return [];
-  const base = env.LOCALAPPDATA ?? env.LocalAppData;
-  return base ? [P.join(base, 'agy', 'bin', 'agy.exe')] : [];
-}
-
-// Pure: env, platform and fs are injected. On Windows only a real .exe is usable (Lazy Dev spawns
-// without a shell); a .cmd/.bat/.ps1 is reported as a shim. On POSIX the file must be executable.
-export function findExecutable(id, env = process.env, platform = process.platform, fs = nodeFs) {
-  const P = platform === 'win32' ? path.win32 : path.posix;
-  const dirs = String(env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
-  let shim = null;
-  for (const dir of dirs) {
-    if (platform === 'win32') {
-      const exe = P.join(dir, `${id}.exe`);
-      if (fs.existsSync(exe)) return { path: exe, shim: false };
-      if (!shim) {
-        for (const ext of ['.cmd', '.bat', '.ps1']) {
-          const cand = P.join(dir, id + ext);
-          if (fs.existsSync(cand)) { shim = cand; break; }
-        }
-      }
-    } else if (isExecutable(fs, P.join(dir, id))) {
-      return { path: P.join(dir, id), shim: false };
-    }
-  }
-  // PATH had no real executable (only a shim, if anything): try the known install location.
-  for (const cand of fallbackExecutables(id, env, platform, P)) {
-    if (fs.existsSync(cand)) return { path: cand, shim: false };
-  }
-  return shim ? { path: shim, shim: true } : null;
-}
 
 const placeholderFor = (id) => `<path-to-${id}-executable>`;
 

@@ -86,6 +86,10 @@ node lazydev-init.mjs --lead opencode --repo <path-to-your-repo>
 Only the OpenCode layout is verified. For any other lead name it prints the generic command, args
 and environment fields instead, so you can translate them.
 
+The lead agent and the worker harnesses are separate choices: the lead can be any MCP-capable agent,
+while workers are chosen from `lazydev.harnesses.json`. Only the OpenCode lead config layout is
+verified here.
+
 ## Configuration
 
 Copy `opencode.mcp.sample.json` to your OpenCode config (usually `opencode.json` in the project or
@@ -158,6 +162,14 @@ into its arguments instead.
 `mcp-server.mjs`; that file is git-ignored because it usually contains local paths. Three
 placeholders are replaced in each `argv` item: `{prompt}` (the task prompt), `{prompt_file}` (a file
 containing the prompt) and `{cwd}` (the task worktree).
+
+Harnesses come from that config file; `lazydev-init` writes only the tools it actually detects.
+`list_harnesses` reports every entry with `"available": true` or `false` (plus a short `"reason"`
+when false) and marks the default with `"default": true`. A task without `"harness"` uses that
+default: `LAZYDEV_DEFAULT_HARNESS` or a `"default"` key in the config when set, otherwise `opencode`
+when it is available, otherwise the only available harness. If there is no clear default, set
+`harness` on each task or set `LAZYDEV_DEFAULT_HARNESS`; a task that names an unavailable harness
+fails before any work starts.
 
 ```json
 {

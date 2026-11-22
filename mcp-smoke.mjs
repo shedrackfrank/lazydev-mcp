@@ -31,6 +31,7 @@ writeFileSync(SMOKE_HARNESSES, JSON.stringify({
   },
 }));
 process.env.LAZYDEV_HARNESSES = SMOKE_HARNESSES;
+delete process.env.LAZYDEV_DEFAULT_HARNESS;
 
 const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER], env: { ...process.env } });
 const client = new Client({ name: 'lazydev-smoke', version: '1.0.0' }, { capabilities: {} });
@@ -63,11 +64,20 @@ try {
       ['dispatch_tasks', 'get_task_report', 'list_harnesses', 'request_integration', 'wait_for_run']);
   });
 
-  await test('list_harnesses: returns a version', async () => {
+  await test('list_harnesses: returns a version and availability flags', async () => {
     const { data, text } = await call('list_harnesses');
     assert.ok(Array.isArray(data), text);
     assert.equal(data[0].id, 'opencode');
     assert.ok(typeof data[0].version === 'string' && data[0].version.trim(), text);
+    for (const h of data) assert.equal(typeof h.available, 'boolean', text);
+    const defaults = data.filter((h) => h.default);
+    assert.equal(defaults.length, 1, text);
+    assert.equal(defaults[0].available, true, text);
+    const oc = data.find((h) => h.id === 'opencode');
+    if (!oc.available) {
+      assert.equal(oc.version, 'not installed', text);
+      assert.ok(oc.reason, text);
+    }
   });
 
   await test('list_harnesses: lists the configured fake command harness', async () => {
@@ -76,6 +86,7 @@ try {
     const fake = data.find((h) => h.id === 'fake');
     assert.ok(fake, text);
     assert.equal(fake.type, 'command');
+    assert.equal(fake.available, true, text);
     assert.equal(fake.version, 'fake-harness 1.0.0');
   });
 

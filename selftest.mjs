@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildBrief, clipVerifyOutput, exec, findCycle, globToRegExp, readyAndBlocked, validateTasks, validRunId } from './lazydev-poc.mjs';
 import { mergeOrder } from './lazydev-integrate.mjs';
-import { fillArgv, normalizeHarnessConfig, validateHarnessConfig } from './lazydev-harnesses.mjs';
+import { fillArgv, findExecutable, harnessAvailability, normalizeHarnessConfig, resolveDefaultHarness, validateHarnessConfig, validateTaskHarnesses } from './lazydev-harnesses.mjs';
 import { selectRuns, uniquePaths } from './lazydev-clean.mjs';
 import { resolveOpencodeBin } from './lazydev-bin.mjs';
-import { AGENT_IDS, buildHarnessConfig, canWriteFile, findExecutable, mcpConfigSnippet } from './lazydev-init.mjs';
+import { AGENT_IDS, buildHarnessConfig, canWriteFile, mcpConfigSnippet } from './lazydev-init.mjs';
 
 const task = (id, depends_on) => ({ id, prompt: `do ${id}`, allowed_paths: ['x.js'], ...(depends_on ? { depends_on } : {}) });
 const spec = (tasks) => ({ tasks });
@@ -526,6 +526,103 @@ test('findExecutable: PATH still wins over the agy fallback', () => {
     findExecutable('agy', { PATH: 'C:\\bin', LOCALAPPDATA: local }, 'win32', fs),
     { path: 'C:\\bin\\agy.exe', shim: false },
   );
+});
+
+// ---------- harness availability and default resolution ----------
+
+const fakeHarnesses = (config, opts = {}) => normalizeHarnessConfig(config, opts);
+
+test('harnessAvailability: opencode is unavailable when its binary is not found', () => {
+  const map = fakeHarnesses({});
+  const av = harnessAvailability(map.get('opencode'), { env: { PATH: 'C:\\bin' }, platform: 'win32', fs: fakeFs() });
+  assert.equal(av.available, false);
+  assert.ok(av.reason && av.reason.includes('opencode CLI not found'), av.reason);
+});
+
+test('harnessAvailability: a command harness needs argv[0] on PATH', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const env = { PATH: 'C:\\bin' };
+  assert.equal(harnessAvailability(map.get('fake'), { env, platform: 'win32', fs: fakeFs() }).available, false);
+  const fs = fakeFs({ files: ['C:\\bin\\fake.exe'] });
+  assert.equal(harnessAvailability(map.get('fake'), { env, platform: 'win32', fs }).available, true);
+});
+
+test('harnessAvailability: a .cmd shim is not available', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const fs = fakeFs({ files: ['C:\\bin\\fake.cmd'] });
+  const av = harnessAvailability(map.get('fake'), { env: { PATH: 'C:\\bin' }, platform: 'win32', fs });
+  assert.equal(av.available, false);
+  assert.ok(av.reason.includes('shim'), av.reason);
+});
+
+test('resolveDefaultHarness: no opencode and one command harness available -> that harness', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const r = resolveDefaultHarness(map, { env: { PATH: 'C:\\bin' }, platform: 'win32', fs: fakeFs({ files: ['C:\\bin\\fake.exe'] }) });
+  assert.deepEqual(r, { id: 'fake' });
+});
+
+test('resolveDefaultHarness: opencode stays the default when it is available', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const env = { APPDATA: 'C:\\Users\\u\\AppData\\Roaming', PATH: 'C:\\bin' };
+  const fs = fakeFs({
+    dirs: { [CLI32]: ['1.0.0'] },
+    files: [join32(CLI32, '1.0.0', 'opencode-cli.exe'), 'C:\\bin\\fake.exe'],
+  });
+  assert.deepEqual(resolveDefaultHarness(map, { env, platform: 'win32', fs }), { id: 'opencode' });
+});
+
+test('resolveDefaultHarness: LAZYDEV_DEFAULT_HARNESS and config.default override opencode', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const env = { APPDATA: 'C:\\Users\\u\\AppData\\Roaming', PATH: 'C:\\bin', LAZYDEV_DEFAULT_HARNESS: 'fake' };
+  const fs = fakeFs({
+    dirs: { [CLI32]: ['1.0.0'] },
+    files: [join32(CLI32, '1.0.0', 'opencode-cli.exe'), 'C:\\bin\\fake.exe'],
+  });
+  assert.deepEqual(resolveDefaultHarness(map, { env, platform: 'win32', fs }), { id: 'fake' });
+  assert.deepEqual(resolveDefaultHarness(map, { config: { default: 'fake' }, env: { ...env, LAZYDEV_DEFAULT_HARNESS: undefined }, platform: 'win32', fs }), { id: 'fake' });
+});
+
+test('resolveDefaultHarness: a bad or unavailable explicit default is an error', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const env = { PATH: 'C:\\bin' };
+  const missing = resolveDefaultHarness(map, { env: { ...env, LAZYDEV_DEFAULT_HARNESS: 'ghost' }, platform: 'win32', fs: fakeFs() });
+  assert.ok(missing.error.includes('not configured'), missing.error);
+  const unavailable = resolveDefaultHarness(map, { env: { ...env, LAZYDEV_DEFAULT_HARNESS: 'fake' }, platform: 'win32', fs: fakeFs() });
+  assert.ok(unavailable.error.includes('not available'), unavailable.error);
+});
+
+test('resolveDefaultHarness: two available command harnesses and no opencode is an error', () => {
+  const map = fakeHarnesses({
+    a: { type: 'command', argv: ['a', '{prompt}'] },
+    b: { type: 'command', argv: ['b', '{prompt}'] },
+  });
+  const r = resolveDefaultHarness(map, {
+    env: { PATH: 'C:\\bin' }, platform: 'win32', fs: fakeFs({ files: ['C:\\bin\\a.exe', 'C:\\bin\\b.exe'] }),
+  });
+  assert.ok(r.error.includes('available: a, b'), r.error);
+  assert.ok(r.error.includes('LAZYDEV_DEFAULT_HARNESS'), r.error);
+});
+
+test('validateTaskHarnesses: an explicit unavailable harness is an error', () => {
+  const map = fakeHarnesses({ fake: { type: 'command', argv: ['fake', '{prompt}'] } });
+  const opts = { env: { PATH: 'C:\\bin' }, platform: 'win32', fs: fakeFs() };
+  const errs = validateTaskHarnesses([{ id: 'a', harness: 'fake' }, { id: 'b' }], map, opts);
+  assert.equal(errs.length, 1);
+  assert.ok(errs[0].includes('task a') && errs[0].includes('not available'), errs.join('; '));
+});
+
+test('validateHarnessConfig: accepts a valid default and rejects an unknown one', () => {
+  assert.deepEqual(validateHarnessConfig({
+    default: 'fake',
+    fake: { type: 'command', argv: ['fake', '{prompt}'] },
+  }), []);
+  const errs = validateHarnessConfig({ default: 'ghost', fake: { type: 'command', argv: ['fake'] } });
+  assert.ok(errs.some((e) => e.includes('"default" names unknown harness')), errs.join('; '));
+});
+
+test('normalizeHarnessConfig: the default key is not a harness', () => {
+  const map = normalizeHarnessConfig({ default: 'fake', fake: { type: 'command', argv: ['fake'] } });
+  assert.deepEqual([...map.keys()], ['opencode', 'fake']);
 });
 
 test('buildHarnessConfig: copies sample flags, fills paths, marks unverified and points at --help', () => {

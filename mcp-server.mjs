@@ -11,7 +11,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { createOutputCollector, GIT_MAX_OUTPUT_BYTES, validateTasks, validRunId } from './lazydev-poc.mjs';
 import { mergeOrder } from './lazydev-integrate.mjs';
-import { DEFAULT_HARNESSES_FILE, normalizeHarnessConfig, OPENCODE, readHarnessConfig } from './lazydev-harnesses.mjs';
+import { DEFAULT_HARNESSES_FILE, harnessAvailability, normalizeHarnessConfig, OPENCODE, readHarnessConfig, resolveDefaultHarness, validateTaskHarnesses } from './lazydev-harnesses.mjs';
 import { resolveOpencodeBin } from './lazydev-bin.mjs';
 
 const execFileP = promisify(execFile);
@@ -93,35 +93,50 @@ const gitRun = (cwd, ...args) => runProcess('git', ['-c', 'core.quotepath=off', 
 
 const server = new McpServer({ name: 'lazydev', version: '1.0.0' });
 
+const SPAWN_ERRORS = new Set(['ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EINVAL', 'UNKNOWN']);
+
 const versionOf = async (cmd, args) => {
   try {
     const r = await execFileP(cmd, args, { windowsHide: true, timeout: 15000 });
-    return (r.stdout || r.stderr || '').trim() || 'unknown';
+    return { version: (r.stdout || r.stderr || '').trim() || 'unknown' };
   } catch (e) {
-    return String(e?.stdout || e?.stderr || e?.message || 'unknown').trim();
+    // A spawn failure (ENOENT, EACCES, ...) means the command was never started.
+    if (SPAWN_ERRORS.has(e?.code)) return { version: 'not installed', error: String(e.message ?? e).trim() };
+    return { version: String(e?.stdout || e?.stderr || '').trim() || 'unknown' };
   }
 };
 
-const harnessVersion = async (h) => {
-  if (h.type === 'opencode') return versionOf(h.bin, h.version_argv ?? ['--version']);
-  if (!h.version_argv || !h.argv?.length) return 'unknown';
+const harnessVersion = async (h, bin) => {
+  if (h.type === 'opencode') return versionOf(bin ?? h.bin, h.version_argv ?? ['--version']);
+  if (!h.version_argv || !h.argv?.length) return { version: 'unknown' };
   return versionOf(h.argv[0], h.version_argv);
 };
 
-server.registerTool('list_harnesses', { description: 'List available coding harnesses and their versions.' }, async () => {
+server.registerTool('list_harnesses', { description: 'List coding harnesses with versions and availability. The default harness has "default": true; call this before dispatch_tasks.' }, async () => {
   if (HARNESS_CONFIG.errors.length) {
     return err('invalid harness config', { file: HARNESSES_FILE, messages: HARNESS_CONFIG.errors });
   }
+  const defaultRes = resolveDefaultHarness(HARNESSES, { config: HARNESS_CONFIG.config });
+  const defaultId = defaultRes.id ?? null;
   const out = [];
   for (const h of HARNESSES.values()) {
-    if (h.id === OPENCODE) {
-      const entry = { id: h.id, type: h.type, model: h.model ?? null, repo: REPO };
-      try { entry.version = await versionOf(opencodeBin(), ['--version']); }
-      catch (e) { entry.version = 'not found'; entry.error = e.message; }
+    const av = harnessAvailability(h);
+    const entry = { id: h.id, type: h.type, model: h.model ?? null, available: av.available, default: h.id === defaultId };
+    if (h.id === OPENCODE) entry.repo = REPO;
+    if (!av.available) {
+      entry.version = 'not installed';
+      if (av.reason) entry.reason = av.reason;
       out.push(entry);
       continue;
     }
-    out.push({ id: h.id, type: h.type, model: h.model ?? null, version: await harnessVersion(h) });
+    const v = await harnessVersion(h, av.bin);
+    entry.version = v.version;
+    if (v.error) {
+      entry.error = v.error;
+      entry.available = false;
+      if (!entry.reason) entry.reason = v.error;
+    }
+    out.push(entry);
   }
   return ok(out);
 });
@@ -136,7 +151,7 @@ const taskSchema = z.object({
 });
 
 server.registerTool('dispatch_tasks', {
-  description: 'Start a LazyDev run of 1-12 coding tasks. allowed_paths entries are exact relative paths or globs (*, **, ?), e.g. ["src/**"]; folder entries are not supported. verify = argument list, program first, run without a shell, e.g. ["node","-e","<js>"]. Split only large independent pieces; merge small or dependent ones into one task. Prompts must state exact export forms and the examples the verify will use. Each task may set harness to an id from list_harnesses.',
+  description: 'Start a LazyDev run of 1-12 coding tasks. allowed_paths entries are exact relative paths or globs (*, **, ?), e.g. ["src/**"]; folder entries are not supported. Tasks without "harness" use the default shown by list_harnesses, so call list_harnesses first. verify = argument list, program first, run without a shell, e.g. ["node","-e","<js>"]. Split only large independent pieces; merge small or dependent ones into one task. Prompts must state exact export forms and the examples the verify will use.',
   inputSchema: {
     tasks: z.array(taskSchema).min(1).max(12),
     model: z.string().optional(),
@@ -144,9 +159,20 @@ server.registerTool('dispatch_tasks', {
     max_parallel: z.number().int().min(1).max(4).optional(),
   },
 }, async (args) => {
+  if (HARNESS_CONFIG.errors.length) {
+    return err('invalid harness config', { file: HARNESSES_FILE, messages: HARNESS_CONFIG.errors });
+  }
   const messages = validateTasks({ tasks: args.tasks }, { harnesses: [...HARNESSES.keys()] });
   if (messages.length) return err('invalid tasks', { messages });
-  const needsOpencode = args.tasks.some((t) => (t.harness ?? OPENCODE) === OPENCODE);
+  const harnessErrs = validateTaskHarnesses(args.tasks, HARNESSES);
+  if (harnessErrs.length) return err('harness not available', { messages: harnessErrs });
+  let defaultId = null;
+  if (args.tasks.some((t) => t.harness === undefined)) {
+    const defaultRes = resolveDefaultHarness(HARNESSES, { config: HARNESS_CONFIG.config });
+    if (defaultRes.error) return err(defaultRes.error);
+    defaultId = defaultRes.id;
+  }
+  const needsOpencode = args.tasks.some((t) => (t.harness ?? defaultId) === OPENCODE);
   let bin = null;
   if (needsOpencode) {
     try { bin = opencodeBin(); } catch (e) { return err(e.message); }
