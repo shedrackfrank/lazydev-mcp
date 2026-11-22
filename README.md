@@ -242,3 +242,5 @@ worker).
 ## License
 
 MIT. See `LICENSE`.
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
